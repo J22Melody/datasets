@@ -7,7 +7,7 @@ import tensorflow as tf
 from pose_format import Pose, PoseHeader
 from pose_format.numpy.pose_body import NumPyPoseBody
 from pose_format.utils.reader import BufferReader
-from tensorflow_datasets.core.features import feature
+from tensorflow_datasets.core.features import feature, Text
 from tensorflow_datasets.core.features.feature import Documentation
 from tensorflow_datasets.core.utils import Json
 from etils import epath
@@ -72,7 +72,7 @@ class PoseFeature(feature.FeatureConnector):
     """
 
     def __init__(self, *, shape=None, header_path: str = None, encoding_format: str = None, stride: int = 1,
-                 dtype=tf.float32):
+                 dtype=tf.float32, include_path: bool = False):
         """Construct the connector.
 
         Args:
@@ -96,6 +96,7 @@ class PoseFeature(feature.FeatureConnector):
         self._shape = shape or (None, None, None, 3)
         self._dtype = dtype
         self._encoding_format = encoding_format or "pose"
+        self._include_path = include_path
 
         self._doc = Documentation()
 
@@ -112,18 +113,22 @@ class PoseFeature(feature.FeatureConnector):
     def get_tensor_info(self):
         # Image is returned as a 3-d uint8 tf.Tensor.
         conf_shape = tuple(list(self._shape)[:3])
-        return {
+        features = {
             "data": feature.TensorInfo(shape=self._shape, dtype=self._dtype),
             "conf": feature.TensorInfo(shape=conf_shape, dtype=self._dtype),
             "fps": feature.TensorInfo(shape=(), dtype=tf.int32),
         }
+        if self._include_path:
+            features["path"] = Text()
+
+        return features
 
     def __getstate__(self):
         state = self.__dict__.copy()
         state["_runner"] = None
         return state
 
-    def encode_body(self, body: NumPyPoseBody):
+    def encode_body(self, path: str, body: NumPyPoseBody):
         # print("shape", body.data.shape, np.isfinite(body.data).all())
 
         if self.stride != 1:
@@ -132,7 +137,10 @@ class PoseFeature(feature.FeatureConnector):
         data = body.data.data
         confidence = body.confidence
 
-        return {"data": data, "conf": confidence, "fps": int(body.fps)}
+        features = {"data": data, "conf": confidence, "fps": int(body.fps)}
+        if self._include_path:
+            features["path"] = path
+        return features
 
     def encode_example(self, pose_path_or_fobj):
         """Convert the given image into a dict convertible to tf example."""
@@ -145,21 +153,24 @@ class PoseFeature(feature.FeatureConnector):
             data_shape = tuple(data_shape)
 
             pose_body = NumPyPoseBody(data=ma.zeros(data_shape), confidence=np.zeros(conf_shape), fps=0)
-            return self.encode_body(pose_body)
+            return self.encode_body("", pose_body)
         elif isinstance(pose_path_or_fobj, Pose):
-            return self.encode_body(pose_path_or_fobj.body)
+            return self.encode_body("obj", pose_path_or_fobj.body)
         elif isinstance(pose_path_or_fobj, epath.PathLikeCls):
             pose_path_or_fobj = os.fspath(pose_path_or_fobj)
             with tf.io.gfile.GFile(pose_path_or_fobj, "rb") as pose_f:
                 encoded_pose = pose_f.read()
+            pose_path = str(pose_path_or_fobj)
         elif isinstance(pose_path_or_fobj, bytes):
             encoded_pose = pose_path_or_fobj
+            pose_path = "bytes"
         else:
+            pose_path = "buffer"
             encoded_pose = pose_path_or_fobj.read()
 
         if self._encoding_format == "pose":
             pose_body = read_body(encoded_pose, self._header, self._read_offset)
-            return self.encode_body(pose_body)
+            return self.encode_body(pose_path, pose_body)
         else:
             raise Exception("Unknown encoding format '%s'" % self._encoding_format)
 

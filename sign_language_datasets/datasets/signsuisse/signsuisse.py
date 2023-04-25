@@ -68,7 +68,7 @@ class SignSuisse(tfds.core.GeneratorBasedBuilder):
         if self._builder_config.include_pose == "holistic":
             pose_header_path = _POSE_HEADERS[self._builder_config.include_pose]
             stride = 1 if self._builder_config.fps is None else 25 / self._builder_config.fps
-            features["pose"] = PoseFeature(shape=(None, 1, 543, 3), header_path=pose_header_path, stride=stride)
+            features["pose"] = PoseFeature(shape=(None, 1, 543, 3), header_path=pose_header_path, stride=stride, include_path=True)
             features["examplePose"] = features["pose"]
 
         return tfds.core.DatasetInfo(
@@ -92,7 +92,7 @@ class SignSuisse(tfds.core.GeneratorBasedBuilder):
                 index = json.load(f)
             results.extend(index)
 
-        return results
+        return results[:10]
 
     def _parse_item(self, item, item_page):
         item["name"] = item["name"].replace("   ", " ").replace("  ", " ")
@@ -207,16 +207,14 @@ class SignSuisse(tfds.core.GeneratorBasedBuilder):
             for datum in data:
                 pose_file = poses_dir.joinpath(id_func([datum["id"], "isolated"]) + ".pose")
                 if pose_file.exists():
-                    with open(pose_file, "rb") as f:
-                        datum["pose"] = Pose.read(f.read())
+                    datum["pose"] = str(pose_file)
                 else:
                     datum["pose"] = None
 
                 if datum["exampleVideo"] != "":
                     pose_file = poses_dir.joinpath(id_func([datum["id"], "example"]) + ".pose")
                     if pose_file.exists():
-                        with open(pose_file, "rb") as f:
-                            datum["examplePose"] = Pose.read(f.read())
+                        datum["examplePose"] = str(pose_file)
                     else:
                         datum["examplePose"] = None
                 else:
